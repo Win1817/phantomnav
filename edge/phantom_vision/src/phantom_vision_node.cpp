@@ -95,6 +95,10 @@ private:
     std::deque<TrackedFrame> frame_history_;
     static constexpr size_t HISTORY_SIZE = 30;
 
+    // Feature thresholds (set from ROS parameters)
+    int     max_features_       = 1500;
+    int     min_features_       = 80;
+
     // Quality metrics
     int     tracked_features_   = 0;
     double  slam_quality_       = 0.0;
