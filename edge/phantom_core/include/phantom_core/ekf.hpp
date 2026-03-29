@@ -94,7 +94,7 @@ private:
         const Eigen::Quaterniond& q);
 
     // Jacobian of process model wrt state
-    StateMat compute_F(const ImuMeasurement& imu, double dt,
+    StateMat compute_F(double dt,
                        const Eigen::Quaterniond& q,
                        const Eigen::Vector3d& accel_body);
 

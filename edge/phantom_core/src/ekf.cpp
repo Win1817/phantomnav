@@ -115,7 +115,7 @@ ExtendedKalmanFilter::quaternion_kinematics_matrix(const Eigen::Quaterniond& q)
 // ─────────────────────────────────────────────────────────────
 // Process model Jacobian F
 // ─────────────────────────────────────────────────────────────
-auto ExtendedKalmanFilter::compute_F(const ImuMeasurement& imu, double dt,
+auto ExtendedKalmanFilter::compute_F(double dt,
                                       const Eigen::Quaterniond& q,
                                       const Eigen::Vector3d& accel_body)
     -> StateMat
@@ -194,7 +194,7 @@ void ExtendedKalmanFilter::predict(const ImuMeasurement& imu)
     // Biases: random walk (unchanged in nominal model)
 
     // ── Covariance propagation ─────────────────────────────────
-    StateMat F = compute_F(imu, dt, q, accel);
+    StateMat F = compute_F(dt, q, accel);
     state_.P = F * state_.P * F.transpose() + Q_ * dt;
 
     // Enforce symmetry
