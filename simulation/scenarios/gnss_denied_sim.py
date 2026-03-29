@@ -249,12 +249,12 @@ class PhantomSimNode(Node):
         fix.latitude        = lat
         fix.longitude       = lon
         fix.altitude        = alt
-        # 3x3 diagonal covariance
+        # 3x3 diagonal covariance (9 elements, row-major)
         cov = gnss_acc * gnss_acc
         fix.position_covariance = [
-            cov, 0, 0,
-            0, cov, 0,
-            0, 0, cov * 4,
+            cov, 0.0, 0.0,
+            0.0, cov, 0.0,
+            0.0, 0.0, cov * 4.0,
         ]
         fix.position_covariance_type = NavSatFix.COVARIANCE_TYPE_DIAGONAL_KNOWN
         self._fix_pub.publish(fix)
