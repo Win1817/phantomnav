@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>phantom_interface</name>
+  <version>1.0.0</version>
+  <description>PhantomInterface™ — Async MQTT edge-to-cloud gateway for PhantomNav</description>
+  <maintainer email="eng@phantomorg.dev">PhantomOrg Engineering</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>phantom_msgs</depend>
+
+  <!-- paho-mqtt installed via pip on the UAV -->
+  <exec_depend>python3-pip</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

@@ -10,17 +10,18 @@ find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(phantom_msgs REQUIRED)
+find_package(eigen3_cmake_module REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 include_directories(
   include
-  ${EIGEN3_INCLUDE_DIR}
+  ${EIGEN3_INCLUDE_DIRS}
 )
 
 add_library(phantom_ekf SHARED
   src/ekf.cpp
 )
-ament_target_dependencies(phantom_ekf rclcpp Eigen3)
+ament_target_dependencies(phantom_ekf rclcpp Eigen3 eigen3_cmake_module)
 
 add_executable(phantom_core_node
   src/phantom_core_node.cpp
