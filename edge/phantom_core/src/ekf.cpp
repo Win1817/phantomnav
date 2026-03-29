@@ -115,10 +115,10 @@ ExtendedKalmanFilter::quaternion_kinematics_matrix(const Eigen::Quaterniond& q)
 // ─────────────────────────────────────────────────────────────
 // Process model Jacobian F
 // ─────────────────────────────────────────────────────────────
-ExtendedKalmanFilter::StateMat
-ExtendedKalmanFilter::compute_F(const ImuMeasurement& imu, double dt,
-                                 const Eigen::Quaterniond& q,
-                                 const Eigen::Vector3d& accel_body)
+auto ExtendedKalmanFilter::compute_F(const ImuMeasurement& imu, double dt,
+                                      const Eigen::Quaterniond& q,
+                                      const Eigen::Vector3d& accel_body)
+    -> StateMat
 {
     StateMat F = StateMat::Identity();
     Eigen::Matrix3d R = quat_to_rotation(q);
@@ -148,7 +148,7 @@ ExtendedKalmanFilter::compute_F(const ImuMeasurement& imu, double dt,
 // ─────────────────────────────────────────────────────────────
 // GNSS measurement Jacobian H
 // ─────────────────────────────────────────────────────────────
-ExtendedKalmanFilter::GnssMat ExtendedKalmanFilter::compute_H_gnss() const
+auto ExtendedKalmanFilter::compute_H_gnss() const -> GnssMat
 {
     GnssMat H = GnssMat::Zero();
     H.block<3,3>(0,0) = Eigen::Matrix3d::Identity();   // pos
