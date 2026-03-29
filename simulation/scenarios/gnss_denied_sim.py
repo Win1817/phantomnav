@@ -184,13 +184,20 @@ class PhantomSimNode(Node):
         msg.angular_velocity.x = gx
         msg.angular_velocity.y = gy
         msg.angular_velocity.z = gz
-        # Covariance
+        # Covariance (3x3 row-major → 9 elements required by sensor_msgs/Imu)
         cov_a = noise * noise
+        cov_g = 0.005 * 0.005  # gyro noise variance
         msg.linear_acceleration_covariance = [
-            cov_a, 0, 0,
-            0, cov_a, 0,
-            0, 0, cov_a,
+            cov_a, 0.0,   0.0,
+            0.0,   cov_a, 0.0,
+            0.0,   0.0,   cov_a,
         ]
+        msg.angular_velocity_covariance = [
+            cov_g, 0.0,   0.0,
+            0.0,   cov_g, 0.0,
+            0.0,   0.0,   cov_g,
+        ]
+        msg.orientation_covariance[0] = -1.0  # orientation not provided
         self._imu_pub.publish(msg)
 
     # ── GNSS publisher ─────────────────────────────────────────
