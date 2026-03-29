@@ -1,0 +1,519 @@
+# ─────────────────────────────────────────────────────────────
+# PhantomNav™ — AKS Kubernetes Manifests
+# Namespace + all 6 microservices + shared config
+# Apply: kubectl apply -f phantomnav-services.yaml
+# ─────────────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: phantomnav
+  labels:
+    app.kubernetes.io/name: phantomnav
+    environment: production
+
+---
+# ─── Shared ConfigMap ─────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phantom-config
+  namespace: phantomnav
+data:
+  MQTT_HOST:    "mosquitto.phantomnav.svc.cluster.local"
+  MQTT_PORT:    "1883"
+  DATABASE_URL: "postgresql://phantom:$(POSTGRES_PASSWORD)@postgres.phantomnav.svc.cluster.local:5432/phantomnav"
+
+---
+# ─── Shared Secret (override with Azure Key Vault CSI in prod) ─
+apiVersion: v1
+kind: Secret
+metadata:
+  name: phantom-secrets
+  namespace: phantomnav
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "REPLACE_WITH_AZURE_KEYVAULT_REF"
+  JWT_SECRET:        "REPLACE_WITH_256BIT_SECRET"
+  MQTT_USER:         "phantomnav"
+  MQTT_PASS:         "REPLACE_WITH_MQTT_PASSWORD"
+
+---
+# ═════════════════════════════════════════════════════════════
+# TELEMETRY SERVICE
+# ═════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemetry-service
+  namespace: phantomnav
+  labels:
+    app: telemetry-service
+    component: cloud
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: telemetry-service
+  template:
+    metadata:
+      labels:
+        app: telemetry-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "8001"
+        prometheus.io/path:   "/metrics"
+    spec:
+      containers:
+        - name: telemetry-service
+          image: phantomacr.azurecr.io/telemetry-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: phantom-config
+            - secretRef:
+                name: phantom-secrets
+          env:
+            - name: PORT
+              value: "8001"
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: telemetry-service
+  namespace: phantomnav
+spec:
+  selector:
+    app: telemetry-service
+  ports:
+    - port: 8001
+      targetPort: 8001
+  type: ClusterIP
+
+---
+# ═════════════════════════════════════════════════════════════
+# MISSION SERVICE
+# ═════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mission-service
+  namespace: phantomnav
+  labels:
+    app: mission-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mission-service
+  template:
+    metadata:
+      labels:
+        app: mission-service
+    spec:
+      containers:
+        - name: mission-service
+          image: phantomacr.azurecr.io/mission-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8002
+          envFrom:
+            - configMapRef:
+                name: phantom-config
+            - secretRef:
+                name: phantom-secrets
+          env:
+            - name: PORT
+              value: "8002"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mission-service
+  namespace: phantomnav
+spec:
+  selector:
+    app: mission-service
+  ports:
+    - port: 8002
+      targetPort: 8002
+  type: ClusterIP
+
+---
+# ═════════════════════════════════════════════════════════════
+# ANALYTICS SERVICE
+# ═════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-service
+  namespace: phantomnav
+  labels:
+    app: analytics-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: analytics-service
+  template:
+    metadata:
+      labels:
+        app: analytics-service
+    spec:
+      containers:
+        - name: analytics-service
+          image: phantomacr.azurecr.io/analytics-service:latest
+          ports:
+            - containerPort: 8003
+          envFrom:
+            - configMapRef:
+                name: phantom-config
+            - secretRef:
+                name: phantom-secrets
+          env:
+            - name: PORT
+              value: "8003"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 15
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-service
+  namespace: phantomnav
+spec:
+  selector:
+    app: analytics-service
+  ports:
+    - port: 8003
+      targetPort: 8003
+  type: ClusterIP
+
+---
+# ═════════════════════════════════════════════════════════════
+# AUTH SERVICE
+# ═════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: phantomnav
+  labels:
+    app: auth-service
+spec:
+  replicas: 3     # HA — all requests hit auth
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          image: phantomacr.azurecr.io/auth-service:latest
+          ports:
+            - containerPort: 8006
+          envFrom:
+            - configMapRef:
+                name: phantom-config
+            - secretRef:
+                name: phantom-secrets
+          env:
+            - name: PORT
+              value: "8006"
+            - name: TOKEN_TTL_S
+              value: "86400"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8006
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: phantomnav
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - port: 8006
+      targetPort: 8006
+  type: ClusterIP
+
+---
+# ═════════════════════════════════════════════════════════════
+# FLEET SERVICE
+# ═════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-service
+  namespace: phantomnav
+  labels:
+    app: fleet-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fleet-service
+  template:
+    metadata:
+      labels:
+        app: fleet-service
+    spec:
+      containers:
+        - name: fleet-service
+          image: phantomacr.azurecr.io/fleet-service:latest
+          ports:
+            - containerPort: 8005
+          envFrom:
+            - configMapRef:
+                name: phantom-config
+            - secretRef:
+                name: phantom-secrets
+          env:
+            - name: PORT
+              value: "8005"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-service
+  namespace: phantomnav
+spec:
+  selector:
+    app: fleet-service
+  ports:
+    - port: 8005
+      targetPort: 8005
+  type: ClusterIP
+
+---
+# ═════════════════════════════════════════════════════════════
+# MQTT BROKER (EMQX / Mosquitto)
+# ═════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  namespace: phantomnav
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+    spec:
+      containers:
+        - name: mosquitto
+          image: eclipse-mosquitto:2.0
+          ports:
+            - containerPort: 1883   # MQTT
+            - containerPort: 8883   # MQTT+TLS
+            - containerPort: 9001   # WebSocket
+          volumeMounts:
+            - name: mosquitto-config
+              mountPath: /mosquitto/config
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+      volumes:
+        - name: mosquitto-config
+          configMap:
+            name: mosquitto-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto-config
+  namespace: phantomnav
+data:
+  mosquitto.conf: |
+    listener 1883
+    allow_anonymous false
+    password_file /mosquitto/config/passwd
+    log_type all
+    persistence true
+    persistence_location /mosquitto/data/
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto
+  namespace: phantomnav
+spec:
+  selector:
+    app: mosquitto
+  ports:
+    - name: mqtt
+      port: 1883
+      targetPort: 1883
+    - name: mqtt-tls
+      port: 8883
+      targetPort: 8883
+  type: LoadBalancer   # External: UAVs connect over internet
+
+---
+# ═════════════════════════════════════════════════════════════
+# INGRESS — expose APIs via NGINX
+# ═════════════════════════════════════════════════════════════
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: phantom-ingress
+  namespace: phantomnav
+  annotations:
+    kubernetes.io/ingress.class:              "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer:          "letsencrypt-prod"
+spec:
+  tls:
+    - hosts:
+        - api.phantomnav.io
+      secretName: phantom-tls
+  rules:
+    - host: api.phantomnav.io
+      http:
+        paths:
+          - path: /telemetry
+            pathType: Prefix
+            backend:
+              service:
+                name: telemetry-service
+                port:
+                  number: 8001
+          - path: /missions
+            pathType: Prefix
+            backend:
+              service:
+                name: mission-service
+                port:
+                  number: 8002
+          - path: /analytics
+            pathType: Prefix
+            backend:
+              service:
+                name: analytics-service
+                port:
+                  number: 8003
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8006
+          - path: /fleet
+            pathType: Prefix
+            backend:
+              service:
+                name: fleet-service
+                port:
+                  number: 8005
+
+---
+# ═════════════════════════════════════════════════════════════
+# HPA — Horizontal Pod Autoscaler for telemetry (highest load)
+# ═════════════════════════════════════════════════════════════
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: telemetry-hpa
+  namespace: phantomnav
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: telemetry-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 70

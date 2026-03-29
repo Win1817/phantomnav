@@ -1,0 +1,198 @@
+# ─────────────────────────────────────────────────────────────
+# PhantomNav™ — Local Development Stack
+# Runs all cloud services locally for edge development/testing.
+#
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f telemetry-service
+#   docker compose down -v
+# ─────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+networks:
+  phantom-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+volumes:
+  postgres-data:
+  mosquitto-data:
+  prometheus-data:
+  grafana-data:
+
+services:
+
+  # ── PostgreSQL ───────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: phantom-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       phantomnav
+      POSTGRES_USER:     phantom
+      POSTGRES_PASSWORD: phantom_dev_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      phantom-net:
+        ipv4_address: 172.20.0.10
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phantom"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── MQTT Broker ──────────────────────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: phantom-mqtt
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    networks:
+      phantom-net:
+        ipv4_address: 172.20.0.11
+
+  # ── Telemetry Service ─────────────────────────────────────────
+  telemetry-service:
+    build:
+      context: ./cloud/telemetry-service
+      dockerfile: Dockerfile
+    container_name: phantom-telemetry
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://phantom:phantom_dev_password@postgres:5432/phantomnav
+      MQTT_HOST:    mosquitto
+      MQTT_PORT:    "1883"
+      PORT:         "8001"
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    networks:
+      - phantom-net
+
+  # ── Mission Service ───────────────────────────────────────────
+  mission-service:
+    build:
+      context: ./cloud/mission-service
+      dockerfile: Dockerfile
+    container_name: phantom-mission
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://phantom:phantom_dev_password@postgres:5432/phantomnav
+      MQTT_HOST:    mosquitto
+      MQTT_PORT:    "1883"
+      PORT:         "8002"
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - phantom-net
+
+  # ── Analytics Service ─────────────────────────────────────────
+  analytics-service:
+    build:
+      context: ./cloud/analytics-service
+      dockerfile: Dockerfile
+    container_name: phantom-analytics
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://phantom:phantom_dev_password@postgres:5432/phantomnav
+      PORT:         "8003"
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - phantom-net
+
+  # ── Auth Service ──────────────────────────────────────────────
+  auth-service:
+    build:
+      context: ./cloud/auth-service
+      dockerfile: Dockerfile
+    container_name: phantom-auth
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://phantom:phantom_dev_password@postgres:5432/phantomnav
+      JWT_SECRET:   dev_jwt_secret_not_for_production
+      TOKEN_TTL_S:  "86400"
+      PORT:         "8006"
+    ports:
+      - "8006:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - phantom-net
+
+  # ── Fleet Service ─────────────────────────────────────────────
+  fleet-service:
+    build:
+      context: ./cloud/fleet-service
+      dockerfile: Dockerfile
+    container_name: phantom-fleet
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://phantom:phantom_dev_password@postgres:5432/phantomnav
+      MQTT_HOST:    mosquitto
+      MQTT_PORT:    "1883"
+      PORT:         "8005"
+    ports:
+      - "8005:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    networks:
+      - phantom-net
+
+  # ── Prometheus ────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: phantom-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./deployment/k8s/monitoring/observability.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    ports:
+      - "9090:9090"
+    networks:
+      - phantom-net
+
+  # ── Grafana ───────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: phantom-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: phantomadmin
+      GF_USERS_ALLOW_SIGN_UP:     "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - phantom-net

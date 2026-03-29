@@ -1,0 +1,69 @@
+# ─────────────────────────────────────────────────────────────
+# PhantomNav™ Edge System Configuration
+# Loaded by all edge ROS 2 nodes via ROS 2 parameter system.
+# ─────────────────────────────────────────────────────────────
+
+phantom_core_node:
+  ros__parameters:
+    # Topic names
+    imu_topic:       /imu/data
+    gnss_fix_topic:  /gnss/fix
+    gnss_vel_topic:  /gnss/velocity
+    output_topic:    /state/estimate
+
+    # EKF process noise (tuned for DJI-class IMU)
+    accel_noise:     0.08     # m/s^2 — accelerometer white noise std
+    gyro_noise:      0.008    # rad/s — gyroscope white noise std
+    accel_bias_rw:   0.0002   # m/s^3 — accel bias random walk
+    gyro_bias_rw:    0.00001  # rad/s^2 — gyro bias random walk
+
+    # GNSS measurement noise
+    gnss_pos_noise:  2.0      # m — position std (overridden by NMEA accuracy)
+    gnss_vel_noise:  0.1      # m/s — velocity std
+
+phantom_vision_node:
+  ros__parameters:
+    image_topic:     /camera/image_raw
+    cam_info_topic:  /camera/camera_info
+    output_pose:     /slam/pose
+    max_features:    1500
+    min_features:    80
+    orb_scale:       1.2
+    orb_levels:      8
+
+phantom_fusion_node:
+  ros__parameters:
+    publish_rate_hz:    50.0
+    slam_weight_min:    0.05     # Never trust SLAM alone at < 5%
+    slam_weight_max:    0.85     # Cap SLAM influence
+    quality_threshold:  0.30     # Minimum SLAM quality to contribute
+    drift_window_s:     30.0
+    slam_align_timeout: 5.0
+
+phantom_sense_node:
+  ros__parameters:
+    publish_rate_hz:      20.0
+    imu_window_size:      50      # Samples for variance analysis
+    drift_penalty_scale:   5.0
+    max_drift_m:          30.0    # Beyond this → confidence ≈ 0
+    slam_quality_weight:   0.35
+    imu_stability_weight:  0.35
+    drift_weight:          0.20
+    gnss_weight:           0.10
+
+phantom_decision_node:
+  ros__parameters:
+    publish_rate_hz:          10.0
+    gnss_timeout_s:            5.0   # GNSS loss threshold
+    mode_change_debounce_s:    2.0   # Hysteresis window
+
+phantom_interface_node:
+  ros__parameters:
+    drone_id:           drone-001
+    broker_host:        mqtt.phantomnav.io
+    broker_port:        8883
+    broker_tls:         true
+    telemetry_rate_hz:  5.0
+    confidence_rate_hz: 2.0
+    mqtt_keepalive_s:   60
+    reconnect_delay_s:  5.0

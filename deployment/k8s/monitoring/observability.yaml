@@ -1,0 +1,271 @@
+# ─────────────────────────────────────────────────────────────
+# PhantomNav™ — Observability Stack
+# Prometheus + Grafana + ServiceMonitors
+# ─────────────────────────────────────────────────────────────
+
+# ── Prometheus ConfigMap ─────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: phantomnav
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval:     15s
+      evaluation_interval: 15s
+
+    rule_files:
+      - /etc/prometheus/rules/*.yaml
+
+    scrape_configs:
+      # PhantomNav services
+      - job_name: 'phantomnav-services'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [phantomnav]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: 'true'
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: service
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+
+      # Kubernetes cluster metrics
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+  # ── Alert rules ─────────────────────────────────────────────
+  phantom_alerts.yaml: |
+    groups:
+      - name: phantomnav.edge
+        rules:
+          # Drone confidence critically low
+          - alert: DroneLowConfidence
+            expr: phantom_confidence_score < 20
+            for: 30s
+            labels:
+              severity: critical
+            annotations:
+              summary: "UAV {{ $labels.drone_id }} confidence critical ({{ $value }})"
+              description: "Navigation confidence below safe threshold for >30s"
+
+          # GNSS lost for extended period
+          - alert: DroneGNSSLost
+            expr: phantom_gnss_available == 0
+            for: 60s
+            labels:
+              severity: warning
+            annotations:
+              summary: "GNSS lost for drone {{ $labels.drone_id }}"
+
+          # Drift exceeding 10 meters
+          - alert: DroneDriftHigh
+            expr: phantom_drift_m > 10
+            for: 15s
+            labels:
+              severity: warning
+            annotations:
+              summary: "Navigation drift {{ $value }}m on {{ $labels.drone_id }}"
+
+      - name: phantomnav.cloud
+        rules:
+          # Service down
+          - alert: ServiceDown
+            expr: up{namespace="phantomnav"} == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "PhantomNav service {{ $labels.service }} is DOWN"
+
+          # High memory usage
+          - alert: HighMemoryUsage
+            expr: |
+              container_memory_usage_bytes{namespace="phantomnav"}
+              / container_spec_memory_limit_bytes{namespace="phantomnav"} > 0.85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory: {{ $labels.container }} at {{ $value | humanizePercentage }}"
+
+          # Telemetry ingestion lag
+          - alert: TelemetryLag
+            expr: phantom_telemetry_lag_s > 5
+            for: 30s
+            labels:
+              severity: warning
+            annotations:
+              summary: "Telemetry lag {{ $value }}s for {{ $labels.drone_id }}"
+
+---
+# ── Prometheus Deployment ─────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: phantomnav
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.48.0
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time=15d"
+            - "--web.enable-lifecycle"
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: storage
+              mountPath: /prometheus
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: storage
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: phantomnav
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+
+---
+# ── ServiceAccount for Prometheus ─────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: phantomnav
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: [nodes, pods, services, endpoints]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: phantomnav
+
+---
+# ── Grafana Deployment ────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: phantomnav
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:10.2.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: phantom-secrets
+                  key: GRAFANA_PASSWORD
+                  optional: true
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: /var/lib/grafana/dashboards/phantom-overview.json
+          volumeMounts:
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+            optional: true
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: phantomnav
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+  type: ClusterIP
