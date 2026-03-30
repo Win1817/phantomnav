@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────
+# PhantomOps™ — Full Stack docker-compose
+# Runs alongside the existing phantomnav docker-compose.
+#
+# Usage:
+#   docker compose up -d
+#   open http://localhost:3000
+# ─────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+networks:
+  phantom-net:
+    external: true   # shares network with phantomnav stack
+
+services:
+
+  # ── PhantomOps Backend ────────────────────────────────────
+  phantomops-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: phantomops-backend
+    restart: unless-stopped
+    environment:
+      PORT:                 "9000"
+      MQTT_HOST:            mosquitto      # phantomnav mqtt broker
+      MQTT_PORT:            "1883"
+      FLEET_SERVICE_URL:    http://phantom-fleet:8005
+      TELEMETRY_SERVICE_URL: http://phantom-telemetry:8001
+      MISSION_SERVICE_URL:  http://phantom-mission:8002
+      ANALYTICS_SERVICE_URL: http://phantom-analytics:8003
+      AUTH_SERVICE_URL:     http://phantom-auth:8006
+      JWT_SECRET:           "${JWT_SECRET:-CHANGE_ME_IN_PRODUCTION_USE_256BIT_KEY}"
+    ports:
+      - "9000:9000"
+    networks:
+      - phantom-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── PhantomOps Frontend ───────────────────────────────────
+  phantomops-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: phantomops-frontend
+    restart: unless-stopped
+    environment:
+      VITE_WS_URL: "ws://localhost:9000/ws"
+    ports:
+      - "3000:80"
+    depends_on:
+      phantomops-backend:
+        condition: service_healthy
+    networks:
+      - phantom-net

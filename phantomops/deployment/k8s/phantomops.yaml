@@ -1,0 +1,238 @@
+# ─────────────────────────────────────────────────────────────
+# PhantomOps™ — AKS Kubernetes Manifests
+# ─────────────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: phantomops
+
+---
+# ── Backend Deployment ──────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phantomops-backend
+  namespace: phantomops
+  labels:
+    app: phantomops-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: phantomops-backend
+  template:
+    metadata:
+      labels:
+        app: phantomops-backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "9000"
+    spec:
+      containers:
+        - name: backend
+          image: ${ACR_NAME}.azurecr.io/phantomops-backend:${IMAGE_TAG}
+          ports:
+            - containerPort: 9000
+          env:
+            - name: PORT
+              value: "9000"
+            - name: MQTT_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: phantomops-config
+                  key: MQTT_HOST
+            - name: MQTT_PORT
+              value: "1883"
+            - name: FLEET_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: phantomops-config
+                  key: FLEET_SERVICE_URL
+            - name: TELEMETRY_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: phantomops-config
+                  key: TELEMETRY_SERVICE_URL
+            - name: MISSION_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: phantomops-config
+                  key: MISSION_SERVICE_URL
+            - name: ANALYTICS_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: phantomops-config
+                  key: ANALYTICS_SERVICE_URL
+            - name: AUTH_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: phantomops-config
+                  key: AUTH_SERVICE_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: phantomops-secrets
+                  key: JWT_SECRET
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phantomops-backend
+  namespace: phantomops
+spec:
+  selector:
+    app: phantomops-backend
+  ports:
+    - port: 9000
+      targetPort: 9000
+
+---
+# ── Frontend Deployment ─────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phantomops-frontend
+  namespace: phantomops
+  labels:
+    app: phantomops-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: phantomops-frontend
+  template:
+    metadata:
+      labels:
+        app: phantomops-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: ${ACR_NAME}.azurecr.io/phantomops-frontend:${IMAGE_TAG}
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phantomops-frontend
+  namespace: phantomops
+spec:
+  selector:
+    app: phantomops-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+
+---
+# ── Ingress ─────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: phantomops-ingress
+  namespace: phantomops
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - ops.phantomnav.io
+      secretName: phantomops-tls
+  rules:
+    - host: ops.phantomnav.io
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: phantomops-backend
+                port:
+                  number: 9000
+          - path: /ws
+            pathType: Exact
+            backend:
+              service:
+                name: phantomops-backend
+                port:
+                  number: 9000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: phantomops-frontend
+                port:
+                  number: 80
+
+---
+# ── ConfigMap ───────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phantomops-config
+  namespace: phantomops
+data:
+  MQTT_HOST:            "emqx.phantomnav.svc.cluster.local"
+  FLEET_SERVICE_URL:    "http://phantom-fleet.phantomnav.svc.cluster.local:8005"
+  TELEMETRY_SERVICE_URL: "http://phantom-telemetry.phantomnav.svc.cluster.local:8001"
+  MISSION_SERVICE_URL:  "http://phantom-mission.phantomnav.svc.cluster.local:8002"
+  ANALYTICS_SERVICE_URL: "http://phantom-analytics.phantomnav.svc.cluster.local:8003"
+  AUTH_SERVICE_URL:     "http://phantom-auth.phantomnav.svc.cluster.local:8006"
+
+---
+# ── HPA — Backend ───────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: phantomops-backend-hpa
+  namespace: phantomops
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: phantomops-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
